@@ -1,1 +1,1 @@
-pip install git+https://github.com/guillermomolina/solaris-oci#egg=solaris-oci
+pip install git+https://github.com/guillermomolina/oci-api-python#egg=oci-api-python
