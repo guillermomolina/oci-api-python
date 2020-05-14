@@ -18,6 +18,7 @@ import logging
 from oci_api import oci_config, OCIError
 from oci_api.util import generate_random_name
 from .container import Container
+from .exceptions import ContainerUnknownException
 
 log = logging.getLogger(__name__)
 
@@ -54,12 +55,12 @@ class Runtime():
         runtime_path = pathlib.Path(oci_config['global']['path'])
         if not runtime_path.is_dir():
             runtime_path.mkdir(parents=True)
-        runtime = {
+        runtime_json = {
             'containers': list(self.containers.keys())
         }
         runtime_file_path = runtime_path.joinpath('runtime.json')
         with runtime_file_path.open('w') as runtime_file:
-            json.dump(runtime, runtime_file, separators=(',', ':'))
+            json.dump(runtime_json, runtime_file, separators=(',', ':'))
 
     def generate_container_name(self):
         container_names = [container.name for container in self.containers.values()]
@@ -86,11 +87,18 @@ class Runtime():
         # small id (6 bytes, 12 octets, 96 bits), the first 12 octets from id
         # id (16 bytes, 32 octets, 256 bits), the sha256 hash
         # name of the container
-        if container_ref in self.containers:
-            return self.containers[container_ref]
-        for container_id, container in self.containers.items():
-            if container_id[:12] == container_ref:
+        for container in self.containers.values():
+            if container.id == container_ref:
+                return container
+            if container.small_id == container_ref:
                 return container
             if container.name == container_ref:
                 return container
-        raise OCIError('Container (%s) is unknown' % container_ref)
+        raise ContainerUnknownException('Container (%s) is unknown' % container_ref)
+
+    def get_containers_using_image(self, image_id):
+        return [
+            container 
+                for container in self.containers.values() 
+                    if container.image.id == image_id
+        ]

@@ -14,5 +14,8 @@
 
 from oci_api import OCIException
 
-class ContainerInUse(OCIException):
+class ContainerUnknownException(OCIException):
+    pass
+
+class ContainerInUseException(OCIException):
     pass

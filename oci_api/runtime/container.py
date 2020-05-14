@@ -24,7 +24,8 @@ from oci_api.util import generate_random_sha256, digest_to_id, id_to_digest
 from oci_api.util.runc import runc_create, runc_delete, runc_exec, \
     runc_start
 from oci_api.util.file import rm
-from oci_api.image import Distribution, Layer
+from oci_api.image import Distribution
+from oci_api.graph import Graph
 
 log = logging.getLogger(__name__)
 
@@ -37,8 +38,13 @@ class Container():
         self.create_time = None
         self.config = None
         self.image = None
-        self.layer = None
+        self.filesystem = None
         self.load()
+
+    @property
+    def small_id(self):
+        if self.id is not None:
+            return self.id[:12]
 
     @property
     def state_change_time(self):
@@ -80,7 +86,7 @@ class Container():
                 self.name = container['name']
                 self.create_time = parser.isoparse(container['create_time'])
                 self.load_image(container['image_id'])
-                self.load_layer(container['diff_id'])
+                self.load_filesystem(container['filesystem_id'])
                 self.load_config()
     
     def load_config(self):
@@ -90,10 +96,9 @@ class Container():
             if config_file_path.is_file():
                 self.config = Spec.from_file(config_file_path)
 
-    def load_layer(self, diff_id):
+    def load_filesystem(self, filesystem_id):
         if self.id is not None:
-            layer = Layer(diff_id, self.id)
-            self.layer = layer
+            self.filesystem = Graph.driver().get_filesystem(filesystem_id)
 
     def load_image(self, image_ref):
         distribution = Distribution()
@@ -112,7 +117,7 @@ class Container():
             'name': self.name,
             'runc_id': self.runc_id,
             'image_id': self.image.id,
-            'diff_id': self.layer.diff_id,
+            'filesystem_id': self.filesystem.id,
             'create_time': self.create_time.strftime('%Y-%m-%dT%H:%M:%S.%f000Z')
         }
         with container_file_path.open('w') as container_file:
@@ -140,10 +145,10 @@ class Container():
         self.name = name
         while True:
             self.id = generate_random_sha256()
-            self.runc_id = self.id[:12] # AKA: zonename
+            self.runc_id = self.small_id # AKA: zonename
             if self.check_runc_id():
                 break
-        self.create_layer()
+        self.create_filesystem()
         self.create_config(command, workdir)
         self.save()
         self.create_container()
@@ -178,7 +183,7 @@ class Container():
                 "cwd": workdir or image_config_config.get('WorkingDir')
             },
             "root": {
-                "path": str(self.layer.path),
+                "path": str(self.filesystem.path),
                 "readonly": False
             },
             "solaris": {
@@ -189,11 +194,14 @@ class Container():
         }
         self.config = Spec.from_json(config_json)
 
-    def create_layer(self):
+    def create_filesystem(self):
         if self.image is None:
-            raise OCIError('Can not create layer witout image for container (%s)', self.id)
-        self.layer = Layer(id=self.id, parent=self.image.top_layer())
-        self.layer.create_diff()
+            raise OCIError('Can not create filesystem witout image for container (%s)' % self.id)
+        layer = self.image.top_layer()
+        if layer is None:
+            raise OCIError('Container (%s) can not create filesystem witout image (%s) top layer' % 
+                (self.id, self.image.name))
+        self.filesystem = layer.create_child_filesystem(self.id)
 
     def create_container(self):
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
@@ -201,8 +209,8 @@ class Container():
         if not config_file_path.is_file():
             raise OCIError('Could not create container (%s), there is no config file'
                 % self.id)
-        if self.layer is None:
-            raise OCIError('Could not create container (%s), there is no layer'
+        if self.filesystem is None:
+            raise OCIError('Could not create container (%s), there is no filesystem'
                 % self.id)
         runc_create(self.runc_id, container_path)
 
@@ -212,7 +220,7 @@ class Container():
         container_status = self.status
         if container_status != 'exited':
             self.remove_container()
-        self.remove_layer()
+        self.remove_filesystem()
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
         rm(container_path.joinpath('config.json'))
         rm(container_path.joinpath('container.json'))
@@ -222,11 +230,11 @@ class Container():
         self.image = None
         self.id = None
         
-    def remove_layer(self):
-        if self.layer is None:
-            raise OCIError('Container (%s) has no layer' % self.id)
-        self.layer.remove()
-        self.layer = None
+    def remove_filesystem(self):
+        if self.filesystem is None:
+            raise OCIError('Container (%s) has no filesystem' % self.id)
+        Graph.driver().remove_filesystem(self.filesystem)
+        self.filesystem = None
 
     def remove_container(self):
         if self.runc_id is None:

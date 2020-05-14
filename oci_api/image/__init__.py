@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .exceptions import ImageInUseException, LayerInUseException
-
+from .exceptions import (
+    ImageUnknownException,
+    ImageExistsException,
+    ImageInUseException, 
+    LayerInUseException
+)
 from .layer import Layer
 from .image import Image
 from .repository import Repository

@@ -14,5 +14,8 @@
 
 from oci_api import OCIException
 
-class NodeInUseException(OCIException):
+class FilesystemInUseException(OCIException):
+    pass
+
+class FilesystemUnknownException(OCIException):
     pass

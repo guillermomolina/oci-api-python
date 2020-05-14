@@ -13,11 +13,11 @@
 # limitations under the License.
 
 from oci_api import OCIError
-from .zfs_driver import ZfsDriver
+from .zfs_driver import ZFSDriver
 
 class Graph:
     @classmethod
     def driver(cls, driver_type='zfs'):
         if driver_type != 'zfs':
             raise OCIError('Unknown driver type (%s)' % driver_type)
-        return ZfsDriver()
+        return ZFSDriver()

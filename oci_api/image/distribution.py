@@ -17,7 +17,8 @@ import pathlib
 import logging
 from oci_spec.distribution.v1 import RepositoryList
 from oci_api import oci_config, OCIError
-from . import Repository, ImageInUseException
+from .repository import Repository
+from .exceptions import ImageInUseException, ImageUnknownException
 
 log = logging.getLogger(__name__)
 
@@ -43,31 +44,31 @@ class Distribution():
     def load(self):
         distribution_path = pathlib.Path(oci_config['global']['path'])
         distribution_file_path = distribution_path.joinpath('distribution.json')
-        log.debug('Start loading distribution file (%s)', distribution_file_path)
+        log.debug('Start loading distribution file (%s)' % distribution_file_path)
         if not distribution_file_path.is_file():
             raise OCIError('Distribution file (%s) does not exist' % distribution_file_path)
         repository_list = RepositoryList.from_file(distribution_file_path)
         self.repositories = {}
         for repository_name in repository_list.get('Repositories'):
-            log.debug('Found repository (%s)', repository_name)
+            log.debug('Found repository (%s)' % repository_name)
             repository = Repository(repository_name)
             self.repositories[repository_name] = repository
-        log.debug('Finish loading distribution file (%s)', distribution_file_path)
+        log.debug('Finish loading distribution file (%s)' % distribution_file_path)
 
     def create(self):
         distribution_file_path = pathlib.Path(oci_config['global']['path'], 
             'distribution.json')
-        log.debug('Start creating distribution file (%s)', distribution_file_path)
+        log.debug('Start creating distribution file (%s)' % distribution_file_path)
         if distribution_file_path.is_file():
             raise OCIError('Distribution file (%s) already exists' % distribution_file_path)
         self.repositories = {}
+        log.debug('Finish creating distribution file (%s)' % distribution_file_path)
         self.save()
-        log.debug('Finish creating distribution file (%s)', distribution_file_path)
 
     def save(self):
         distribution_path = pathlib.Path(oci_config['global']['path'])
         distribution_file_path = distribution_path.joinpath('distribution.json')
-        log.debug('Start saving distribution file (%s)', distribution_file_path)
+        log.debug('Start saving distribution file (%s)' % distribution_file_path)
         if not distribution_path.is_dir():
             distribution_path.mkdir(parents=True)
         repository_list_json = {
@@ -75,25 +76,13 @@ class Distribution():
         }
         repository_list = RepositoryList.from_json(repository_list_json)
         repository_list.save(distribution_file_path)
-        log.debug('Finish saving distribution file (%s)', distribution_file_path)
+        log.debug('Finish saving distribution file (%s)' % distribution_file_path)
 
     def get_repository(self, repository_name):
         try:
             return self.repositories[repository_name]
         except:
-            raise OCIError('Repository (%s) does not exist' % repository_name)
-
-    def create_image(self, image_name, rootfs_tar_file, image_config):
-        log.debug('Start creating image (%s)', image_name)
-        repository_name, tag = split_image_name(image_name)
-        repository = self.repositories.get(repository_name, None)
-        if repository is None:
-            repository = Repository(repository_name)
-            self.repositories[repository_name] = repository
-            self.save()
-        image = repository.create_image(tag, rootfs_tar_file, image_config)
-        log.debug('Finish creating image (%s)', image_name)
-        return image
+            raise ImageUnknownException('Repository (%s) does not exist' % repository_name)
 
     def get_image(self, image_ref):        
         # image_ref, can either be:
@@ -106,14 +95,14 @@ class Distribution():
             for image in repository.images.values():                
                 if image.id == image_ref:
                     return image
-                if image.id[:12] == image_ref:
+                if image.small_id == image_ref:
                     return image
                 if image.repository == repository_name and image.tag == tag:
                     return image
-        raise OCIError('Image (%s) is unknown' % image_ref)
+        raise ImageUnknownException('Image (%s) is unknown' % image_ref)
 
     def remove_image(self, image_name):
-        log.debug('Start removing image (%s)', image_name)
+        log.debug('Start removing image (%s)' % image_name)
         image = self.get_image(image_name)
         repository_name = image.repository
         tag = image.tag
@@ -122,4 +111,35 @@ class Distribution():
         if repository.index is None:
             del self.repositories[repository_name]
             self.save()
-        log.debug('Finish removing image (%s)', image_name)
+        log.debug('Finish removing image (%s)' % image_name)
+
+    def save_image(self, image_name, path):
+        log.debug('Start exporting image (%s)' % image_name)
+        repository_name, tag = split_image_name(image_name)
+        repository = self.get_repository(repository_name)
+        repository_layout_path = path.joinpath('_'.join([repository_name, tag]))
+        repository_layout_path.mkdir()
+        repository.save_image(tag, repository_layout_path)
+        log.debug('Finish exportig image (%s)' % image_name)
+
+    def load_image(self, image_name, repository_layout_path):
+        log.debug('Start importing image (%s)' % image_name)
+        repository_name, tag = split_image_name(image_name)
+        repository = self.repositories.get(repository_name, Repository(repository_name))
+        image = repository.load_image(tag, repository_layout_path)
+        if repository_name not in self.repositories:
+            self.repositories[repository_name] = repository
+            self.save()
+        log.debug('Finish importing image (%s)' % image_name)
+        return image
+
+    def import_image(self, image_name, rootfs_tar_path, image_config):
+        log.debug('Start creating image (%s)' % image_name)
+        repository_name, tag = split_image_name(image_name)
+        repository = self.repositories.get(repository_name, Repository(repository_name))
+        image = repository.import_image(tag, rootfs_tar_path, image_config)
+        if repository_name not in self.repositories:
+            self.repositories[repository_name] = repository
+            self.save()
+        log.debug('Finish creating image (%s)' % image_name)
+        return image

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .exceptions import (
-    FilesystemInUseException,
-    FilesystemUnknownException
-)
-from .graph import Graph
+# Filesystem -> Layer -> Filesystem -> Layer ... 
+
+class Filesystem():
+    pass

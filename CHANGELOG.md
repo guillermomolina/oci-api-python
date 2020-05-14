@@ -1,7 +1,16 @@
 # Change log for OCI API
 
+## 2020-05-14: Version 0.2.0
 
-## 2020-05-07: Version 0.1.3
+- Simplified Graph ZFSDriver filesystem backend
+- Added Image save for "oci image save"
+- Added Image load for "oci image load"
+- Added Graph Driver Filesystem
+- Added Graph ZFSDriver ZFSFilesystem 
+- Removed ZFS media type
+
+
+## 2020-05-08: Version 0.1.3
 
 - Refactor project, moved out oci and util to project "oci-api-python"
 - Refactor project, moved out cli, to project "oci-cli-python"
@@ -14,7 +23,7 @@
 - Added version info to commands
 - Added "oci image import"
 - Removed "mkimage" in favor of "oci image import -r"
-- Added more checks to recognize valid ZFS in ZFS graph driver
+- Added more checks to recognize valid ZFS in Graph ZFSDriver
 
 
 ## 2020-05-06: Version 0.1.1
@@ -30,7 +39,7 @@
 - Added "oci container list"
 - Added "oci container remove"
 - Added "oci container inspect"
-- Changed base_id lenght to 12 in ZFS graph driver
+- Changed base_id lenght to 12 in Graph ZFSDriver
 - Changed runc checks on run and create 
 
 
@@ -42,7 +51,7 @@
 ## 2020-04-28: Version 0.0.5
 
 - Added the graph engine
-- Added the ZFS graph driver
+- Added the Graph ZFSDriver
 - Added the ZFS media type
 - Added xz, lz and parallel compressing methods
 - Added "oci image rm"

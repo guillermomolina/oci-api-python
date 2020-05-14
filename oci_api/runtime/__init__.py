@@ -12,5 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .exceptions import ContainerInUse
+from .exceptions import (
+    ContainerUnknownException,
+    ContainerInUseException
+)
 from .runtime import Runtime

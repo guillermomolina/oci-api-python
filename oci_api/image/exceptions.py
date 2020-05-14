@@ -14,6 +14,12 @@
 
 from oci_api import OCIException
 
+class ImageUnknownException(OCIException):
+    pass
+
+class ImageExistsException(OCIException):
+    pass
+
 class ImageInUseException(OCIException):
     pass
 

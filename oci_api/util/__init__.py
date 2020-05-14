@@ -18,10 +18,12 @@ from .random import generate_random_sha256, generate_random_id, \
     generate_random_name
 
 def digest_to_id(digest):
-    return digest.split(':')[1]
+    if digest is not None:
+        return digest.split(':')[1]
 
 def id_to_digest(id):
-    return 'sha256:' + id 
+    if id is not None:
+        return 'sha256:' + id 
 
 
 def architecture():

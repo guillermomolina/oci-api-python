@@ -16,7 +16,6 @@
 import subprocess
 import secrets
 import time
-#import shutil
 import logging
 from oci_api import OCIError
 
@@ -58,9 +57,10 @@ def untar(dir_path, tar_file_path=None, tar_file=None):
     log.debug('Running command: "cd ' + str(dir_path) + ';' + ' '.join(cmd) + '"')
     return subprocess.call(cmd, cwd=dir_path, stdin=stdin)
 
-def compress(file_path, method='gz', 
-    parallel=True, keep_original=False):
+def uncompress(compressed_file_path, uncompressed_file_path, method='gz'):
+    raise NotImplementedError()
 
+def compress(file_path, method='gz', parallel=True, keep_original=False):
     commands  = {
         'xz': ['/usr/bin/xz'],
         'gz': ['/usr/bin/gzip'],
@@ -84,7 +84,11 @@ def compress(file_path, method='gz',
         
     cmd.append(str(file_path))
     log.debug('Running command: "' + ' '.join(cmd) + '"')
-    return subprocess.call(cmd)
+    if subprocess.call(cmd) == 0:
+        compressed_file_path = file_path.with_suffix(file_path.suffix + '.' + method)
+        if compressed_file_path.is_file():
+            return compressed_file_path
+    return None
 
 def du(dir_name):
     cmd = ['/usr/gnu/bin/du', '-bs', str(dir_name)]
