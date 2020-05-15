@@ -242,7 +242,7 @@ class Container():
         container_status = self.status
         force = container_status == 'running'
         if runc_delete(self.runc_id, force) != 0:
-            pass 
+            pass
             #raise OCIError('Could not delete container')
 
     def exec(self, command, args=None):

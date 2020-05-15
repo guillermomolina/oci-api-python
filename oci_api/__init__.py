@@ -22,7 +22,9 @@ oci_config = {
     'graph': {
         'driver': 'zfs',
         'zfs': {
-            'filesystem': 'rpool/oci'
+            'filesystem': 'rpool/oci',
+            'compression': 'lz4',
+#            'compression': 'off',
         }
     }
 }

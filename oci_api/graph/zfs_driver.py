@@ -33,10 +33,11 @@ class ZFSDriver(Driver):
         if not self.driver_path.is_dir():
             self.driver_path.mkdir(parents=True)
         self.root_zfs = oci_config['graph']['zfs']['filesystem']
+        compression = oci_config['graph']['zfs']['compression']
         if not zfs_is_filesystem(self.root_zfs):
-            log.info('Creating root zfs (%s)' % root_zfs)
+            log.info('Creating root zfs (%s)' % self.root_zfs)
             self.root_zfs = zfs_create(self.root_zfs, mountpoint=self.driver_path, 
-                compression=True)
+                compression=compression)
             if self.root_zfs is None:
                 raise OCIError('Could not create root zfs (%s)' % root_zfs)   
         graph_path = pathlib.Path(oci_config['global']['path'])
@@ -68,17 +69,14 @@ class ZFSDriver(Driver):
         self.filesystems = {}
         with graph_file_path.open() as graph_file:
             graph = json.load(graph_file)
-            self.load_filesystems(graph['filesystems'])
+            for filesystem_json in graph['filesystems']:
+                filesystem_id = filesystem_json['id']
+                log.debug('Found filesystem (%s)' % filesystem_id)
+                origin_id = filesystem_json.get('origin_id', None)
+                origin = self.get_filesystem(origin_id)
+                filesystem = ZFSFilesystem(filesystem_id, origin)
+                self.filesystems[filesystem_id] = filesystem
         log.debug('Finish loading graph file (%s)' % graph_file_path)
-
-    def load_filesystems(self, filesystems, layer=None):
-        for filesystem_json in filesystems:
-            filesystem_id = filesystem_json['id']
-            log.debug('Found filesystem (%s)' % filesystem_id)
-            origin_id = filesystem_json.get('origin_id', None)
-            origin = self.get_filesystem(origin_id)
-            filesystem = ZFSFilesystem(filesystem_id, origin)
-            self.filesystems[filesystem_id] = filesystem
 
     def save(self):
         graph_path = pathlib.Path(oci_config['global']['path'])

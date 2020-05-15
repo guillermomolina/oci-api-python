@@ -60,12 +60,12 @@ class Image():
 
     def size(self):
         if self.layers is not None and len(self.layers) != 0:
-            return sum([layer.size for layer in self.layers])
+            return sum([layer.size() for layer in self.layers])
         return None
 
     def virtual_size(self):
-        log.warning('Method virtual_size() not implemented defaulting to size()')
-        return self.size()
+        if self.layers is not None and len(self.layers) != 0:
+            return sum([layer.virtual_size() for layer in self.layers])
 
     def copy(self, manifest_id, repository_layout_path):
         blobs_path = repository_layout_path.joinpath('blobs', 'sha256')

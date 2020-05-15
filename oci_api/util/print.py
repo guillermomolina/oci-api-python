@@ -28,9 +28,10 @@ def print_table(table):
             })
 
     # adjust columns lenghts to max record sizes
-    for row in table:
-        for column in columns:
-            value = str(row[column['key']])
+    for column in columns:
+        for row in table:
+            value = str(row[column['key']]).replace('\t', ' ')
+            row[column['key']] = value
             column['length'] = max(column['length'], len(value))
 
 
@@ -45,6 +46,6 @@ def print_table(table):
         strings = []
         for column in columns:
             str_format = '{:%s}' % str(column['length'])
-            value = str(row[column['key']])
+            value = row[column['key']]
             strings.append(str_format.format(value))
         print('   '.join(strings))

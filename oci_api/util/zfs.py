@@ -16,22 +16,26 @@
 import subprocess
 import pathlib
 import logging
+import io
 
 log = logging.getLogger(__name__)
 
-def zfs(command,  arguments=None, options=None):
+def _zfs(command,  arguments=None, options=None, stdout=None):
     cmd = ['/usr/sbin/zfs', command]
     if options is not None:
         for option in options:
             cmd += ['-o', option]
     if arguments is not None:
         cmd += arguments
-    with open('/dev/null', 'w') as dev_null:
-        log.debug('Running command: "' + ' '.join(cmd) + '"')
-        return subprocess.call(cmd, stderr=dev_null)
-    return -1
+    log.debug('Running command: "' + ' '.join(cmd) + '"')
+    return subprocess.Popen(cmd, stdout=stdout)
 
-def zfs_create(zfs_name, parent=None, mountpoint=None, compression=False):
+def zfs(command,  arguments=None, options=None):
+    process = _zfs(command, arguments, options)
+    stdout = process.communicate()[0]
+    return process.returncode
+
+def zfs_create(zfs_name, parent=None, mountpoint=None, compression=None):
     filesystem = zfs_name
     if parent is not None:
         filesystem = parent + '/' + zfs_name
@@ -43,8 +47,8 @@ def zfs_create(zfs_name, parent=None, mountpoint=None, compression=False):
     options = []
     if mountpoint is not None:
         options += ['mountpoint=' + str(mountpoint)]
-    if compression:
-        options.append('compression=lz4')
+    if compression is not None:
+        options.append('compression=' + compression)
     if len(options) == 0:
         options = None
     if zfs('create', [filesystem], options) == 0:
@@ -123,17 +127,14 @@ def zfs_destroy(zfs_name, recursive=False, synchronous=True):
     return zfs('destroy', arguments)
 
 def zfs_send(last_snapshot, target_file_path, first_snapshot=None, recursive=False):
-    cmd = ['/usr/sbin/zfs', 'send']
+    arguments = []
     if recursive:
-        cmd.append('-R')
+        arguments.append('-R')
     if first_snapshot is not None:
-        cmd += ['-I', first_snapshot]
-    cmd.append(last_snapshot)
-    with open('/dev/null', 'w') as dev_null:
-        with open(target_file_path,'wb') as target_file:
-            log.debug('Running command: "' + ' '.join(cmd) + ' > ' + str(target_file_path) + '"')
-            return subprocess.call(cmd, stdout=target_file, stderr=dev_null)
-    return None
+        arguments += ['-I', first_snapshot]
+    arguments.append(last_snapshot)
+    with open(target_file_path,'wb') as target_file:
+        return zfs('send', arguments, stdout=target_file)
 
 def zfs_list(zfs_name=None, zfs_type=None, recursive=False,\
         properties=['name', 'used', 'avail', 'refer', 'mountpoint']):
@@ -177,3 +178,37 @@ def zfs_is_snapshot(zfs_name):
         return zfs_get(zfs_name, 'type') == 'snapshot'
     except:
         return False
+
+def zfs_diff(final_snapshot, origin_snapshot=None, include_file_types=False, recursive=False):
+    # Implemented as generator, in case it is too big
+    file_types = {
+        'F': 'file',
+        '/': 'directory',
+        'B': 'device',
+        '>': 'door',
+        '|': 'fifo',
+        '@': 'link',
+        'P': 'portal',
+        '=': 'socket'
+    }
+    change_types = {
+        '+': 'added',
+        '-': 'removed',
+        'M': 'modified',
+        'R': 'renamed'
+    }
+
+    arguments = ['-H']
+    if include_file_types:
+        arguments.append('-F')
+    if recursive:
+        arguments.append('-r')
+    if origin_snapshot is None:
+        arguments.append('-E')
+    else:
+        arguments.append(origin_snapshot)
+    arguments.append(final_snapshot)
+    process = _zfs('diff', arguments, stdout=subprocess.PIPE)
+    for line in io.TextIOWrapper(process.stdout, encoding="utf-8"):
+        records = line.strip().split('\t')
+        yield records

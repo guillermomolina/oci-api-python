@@ -113,20 +113,18 @@ class Distribution():
             self.save()
         log.debug('Finish removing image (%s)' % image_name)
 
-    def save_image(self, image_name, path):
+    def save_image(self, image_name, layout_path):
         log.debug('Start exporting image (%s)' % image_name)
         repository_name, tag = split_image_name(image_name)
         repository = self.get_repository(repository_name)
-        repository_layout_path = path.joinpath('_'.join([repository_name, tag]))
-        repository_layout_path.mkdir()
-        repository.save_image(tag, repository_layout_path)
+        repository.save_image(tag, layout_path)
         log.debug('Finish exportig image (%s)' % image_name)
 
-    def load_image(self, image_name, repository_layout_path):
+    def load_image(self, image_name, layout_path):
         log.debug('Start importing image (%s)' % image_name)
         repository_name, tag = split_image_name(image_name)
         repository = self.repositories.get(repository_name, Repository(repository_name))
-        image = repository.load_image(tag, repository_layout_path)
+        image = repository.load_image(tag, layout_path)
         if repository_name not in self.repositories:
             self.repositories[repository_name] = repository
             self.save()

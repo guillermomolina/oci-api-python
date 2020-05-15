@@ -17,6 +17,7 @@ import subprocess
 import secrets
 import time
 import logging
+import shutil
 from oci_api import OCIError
 
 log = logging.getLogger(__name__)
@@ -58,7 +59,23 @@ def untar(dir_path, tar_file_path=None, tar_file=None):
     return subprocess.call(cmd, cwd=dir_path, stdin=stdin)
 
 def uncompress(compressed_file_path, uncompressed_file_path, method='gz'):
-    raise NotImplementedError()
+    commands  = {
+        'xz': ['/usr/bin/xzcat'],
+        'gz': ['/usr/bin/gzcat'],
+        'bz2': ['/usr/bin/bzcat'],
+        'lz': ['/usr/bin/lzcat']
+    }
+
+    cmd = commands.get(method, None)
+    if cmd is None:
+        raise OCIError('method (%s) not supported' % method)
+    cmd.append(str(compressed_file_path))
+
+    with open(uncompressed_file_path, 'wb') as uncompressed_file:
+        log.debug('Start running command: "' + ' '.join(cmd) + ' > %s"' % uncompressed_file_path)
+        rc =  subprocess.call(cmd,  stdout=uncompressed_file)
+        log.debug('Finish running command: "' + ' '.join(cmd) + ' > %s"' % uncompressed_file_path)
+        return rc
 
 def compress(file_path, method='gz', parallel=True, keep_original=False):
     commands  = {
@@ -97,16 +114,20 @@ def du(dir_name):
     value = output.decode('utf-8').split()[0]
     return int(value)
         
-def rm(file_name, retries=5, sleep=1):
+def rm(file_name, retries=5, sleep=1, recursive=False):
     for i in range(retries):
         if not file_name.exists():
             return 0
         try:
             if file_name.is_dir():
-                log.debug('Running command: "rmdir ' + str(file_name) + '"')
-                file_name.rmdir()
+                if recursive:
+                    log.debug('Running: "rm -r' + str(file_name) + '"')
+                    shutil.rmtree(file_name)
+                else:    
+                    log.debug('Running: "rmdir ' + str(file_name) + '"')
+                    file_name.rmdir()
             else:
-                log.debug('Running command: "rm ' + str(file_name) + '"')
+                log.debug('Running: "rm ' + str(file_name) + '"')
                 file_name.unlink()
         except:
             log.exception('Could not delete path (%s) at attempt (%i)' % (

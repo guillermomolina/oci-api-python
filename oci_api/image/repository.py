@@ -111,9 +111,9 @@ class Repository():
             return
         self.save()
 
-    def save_image(self, tag, repository_layout_path):
+    def save_image(self, tag, layout_path):
         oci_layout = ImageLayout(version='1.0.0')
-        oci_layout_file_path = repository_layout_path.joinpath('oci-layout')
+        oci_layout_file_path = layout_path.joinpath('oci-layout')
         log.debug('Creating oci layout file (%s)' % oci_layout_file_path)
         oci_layout.save(oci_layout_file_path)
         image = self.get_image(tag)
@@ -121,24 +121,24 @@ class Repository():
         for manifest_descriptor in self.index.get('Manifests'):
             if manifest_descriptor.get('Digest') == manifest_digest:
                 index = Index(manifests=[manifest_descriptor])
-                index_file_path = repository_layout_path.joinpath('index.json')
+                index_file_path = layout_path.joinpath('index.json')
                 log.debug('Creating index file (%s)' % index_file_path)
                 index.save(index_file_path)
-                image.export(repository_layout_path)
+                image.export(layout_path)
                 return
 
-    def load_image(self, tag, repository_layout_path):
+    def load_image(self, tag, layout_path):
         if tag in self.images:
             raise ImageExistsException('Image tag (%s) already exist' % tag)
 
-        oci_file_path = repository_layout_path.joinpath('oci-layout')
+        oci_file_path = layout_path.joinpath('oci-layout')
         if not oci_file_path.is_file():
-            raise OCIError('There is no oci-layout file in (%s)' % str(repository_layout_path))
+            raise OCIError('There is no oci-layout file in (%s)' % str(layout_path))
         oci_layout = ImageLayout.from_file(oci_file_path)
 
-        index_file_path = repository_layout_path.joinpath('index.json')
+        index_file_path = layout_path.joinpath('index.json')
         if not index_file_path.is_file():
-            raise OCIError('There is no index.json file in (%s)' % str(repository_layout_path))
+            raise OCIError('There is no index.json file in (%s)' % str(layout_path))
         index = Index.from_file(index_file_path)
         manifest_descriptors = index.get('Manifests')
         if len(manifest_descriptors) == 0:
@@ -152,7 +152,7 @@ class Repository():
         manifest_descriptor.add('Annotations', {'org.opencontainers.image.ref.name': tag})
 
         image = Image(self.name, tag)
-        image.copy(manifest_id, repository_layout_path)
+        image.copy(manifest_id, layout_path)
         self.images[tag] = image
 
         if self.index is None:

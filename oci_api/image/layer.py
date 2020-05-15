@@ -16,6 +16,7 @@
 import logging
 import shutil
 import pathlib
+import tempfile
 from oci_spec.image.v1 import (
     Descriptor,
     MediaTypeImageLayerNonDistributable,
@@ -23,7 +24,7 @@ from oci_spec.image.v1 import (
 )
 from oci_api import oci_config, OCIError
 from oci_api.util import id_to_digest
-from oci_api.util.file import rm, compress, sha256sum
+from oci_api.util.file import rm, compress, sha256sum, uncompress
 from oci_api.graph import Graph
 from .exceptions import LayerInUseException
 
@@ -36,6 +37,7 @@ class Layer:
         self.diff_id = diff_id
         self.parent = parent
         self.filesystem = None
+        self.file_size = None
 
     @property
     def small_id(self):
@@ -50,9 +52,13 @@ class Layer:
     def diff_digest(self):
         return id_to_digest(self.diff_id)
 
-    @property
     def size(self):
-        return self.filesystem.size
+        if self.filesystem is not None:
+            return self.filesystem.diff_size()
+
+    def virtual_size(self):
+        if self.filesystem is not None:
+            return self.filesystem.virtual_size()
 
     def child_filesystems(self):
         return Graph.driver().get_child_filesystems(self.filesystem)
@@ -64,10 +70,11 @@ class Layer:
         if self.id is None:
             raise OCIError('Can not load layer without id')
         log.debug('Start loading layer (%s)' % self.id)
+        layers_path = pathlib.Path(oci_config['global']['path'], 'layers')
+        layer_file_path = layers_path.joinpath(self.id)
         if blobs_path is not None:
             layer_file_source_path = blobs_path.joinpath(self.id)
             log.debug('Start importing layer (%s)' % layer_file_source_path)
-            layers_path = pathlib.Path(oci_config['global']['path'], 'layers')
             if not layers_path.is_dir():
                 layers_path.mkdir()
             log.debug('Start copying layer file (%s)' % layer_file_source_path)
@@ -76,13 +83,12 @@ class Layer:
             origin = None
             if self.parent is not None:
                 origin = self.parent.filesystem
-            filesystem = Graph.driver().create_filesystem(self.id, origin)
-            layers_path = pathlib.Path(oci_config['global']['path'], 'layers')
-            layer_file_path = layers_path.joinpath(self.id)
-            filesystem.add_tar_file(layer_file_path)
+            filesystem = Graph.driver().create_filesystem(self.diff_id, origin)
+            filesystem.load_changeset(layer_file_path)
             filesystem.commit()
             log.debug('Finish importing layer (%s)' % layer_file_source_path)
-        self.filesystem = Graph.driver().get_filesystem(self.id)
+        self.filesystem = Graph.driver().get_filesystem(self.diff_id)
+        self.file_size = layer_file_path.stat().st_size
         log.debug('Finish loading layer (%s)' % self.id)
 
     def remove(self):

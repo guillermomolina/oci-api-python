@@ -1,12 +1,23 @@
 # Change log for OCI API
 
+## 2020-05-15: Version 0.3.0
+
+- Added Graph ZFSFilesystem changeset
+- Added zfs diff interface
+- Removed extra directory (repository_tag/) in image save/load
+- Modify Graph ZFSFilesystem id for layers from Layer id to Layer diff_id
+- Added configured ZFS compression type
+- Modified Image Layer and Graph ZFSFilesystem size calculation
+
 ## 2020-05-14: Version 0.2.0
 
 - Simplified Graph ZFSDriver filesystem backend
-- Added Image save for "oci image save"
-- Added Image load for "oci image load"
-- Added Graph Driver Filesystem
-- Added Graph ZFSDriver ZFSFilesystem 
+- Added Image Distribution save for "oci image save"
+- Added Image Distribution load for "oci image load"
+- Added Graph Driver
+- Added Graph ZFSDriver
+- Added Graph Filesystem
+- Added Graph ZFSFilesystem 
 - Removed ZFS media type
 
 
