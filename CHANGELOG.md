@@ -1,5 +1,12 @@
 # Change log for OCI API
 
+## 2020-05-23: Version 0.4.0
+
+- Add build process in Image
+- Removed Distribution and Repository import image, "oci image import" uses build system
+- Changed Image Distribution to be singleton in Image 
+- Refactor Graph backend into Filesystem
+
 ## 2020-05-15: Version 0.3.0
 
 - Added Graph ZFSFilesystem changeset

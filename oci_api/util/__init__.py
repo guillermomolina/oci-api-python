@@ -14,8 +14,10 @@
 
 import platform
 
-from .random import generate_random_sha256, generate_random_id, \
+from oci_api.exceptions import OCIError
+from .random import generate_random_sha256, generate_random_filesystem_id, \
     generate_random_name
+from .singleton import Singleton
 
 def digest_to_id(digest):
     if digest is not None:
@@ -24,7 +26,6 @@ def digest_to_id(digest):
 def id_to_digest(id):
     if id is not None:
         return 'sha256:' + id 
-
 
 def architecture():
     architectures = {
@@ -35,3 +36,18 @@ def architecture():
 
 def operating_system():
     return platform.system()
+
+def split_image_name(image_name):
+    splitted_image_name = image_name.split(':')            
+    if len(splitted_image_name) == 1:
+        splitted_image_name.append('latest')
+    elif len(splitted_image_name) != 2:
+        raise OCIError('Invalid image name (%s)' % image_name)
+    return tuple(splitted_image_name)
+
+def get_image_name(repository, tag):
+    return repository + ':' + tag
+
+def normalize_image_name(image_name):
+    (repository, tag) = split_image_name(image_name)
+    return get_image_name(repository, tag)

@@ -212,3 +212,7 @@ def zfs_diff(final_snapshot, origin_snapshot=None, include_file_types=False, rec
     for line in io.TextIOWrapper(process.stdout, encoding="utf-8"):
         records = line.strip().split('\t')
         yield records
+
+def zfs_rename(original_zfs_name, new_zfs_name):
+    arguments = [original_zfs_name, new_zfs_name]
+    return zfs('rename', arguments)

@@ -24,8 +24,8 @@ from oci_api.util import generate_random_sha256, digest_to_id, id_to_digest
 from oci_api.util.runc import runc_create, runc_delete, runc_exec, \
     runc_start
 from oci_api.util.file import rm
+from oci_api.graph import Driver
 from oci_api.image import Distribution
-from oci_api.graph import Graph
 
 log = logging.getLogger(__name__)
 
@@ -97,13 +97,10 @@ class Container():
                 self.config = Spec.from_file(config_file_path)
 
     def load_filesystem(self, filesystem_id):
-        if self.id is not None:
-            self.filesystem = Graph.driver().get_filesystem(filesystem_id)
+        self.filesystem = Driver().get_filesystem(filesystem_id)
 
     def load_image(self, image_ref):
-        distribution = Distribution()
-        image = distribution.get_image(image_ref)
-        self.image = image
+        self.image = Distribution().get_image(image_ref)
 
     def save(self):
         if self.id is None:
@@ -178,9 +175,9 @@ class Container():
                     "uid": 0,
                     "gid": 0
                 },
-                "args": command or image_config_config.get('Cmd'),
-                "env": image_config_config.get('Env'),
-                "cwd": workdir or image_config_config.get('WorkingDir')
+                "args": command or image_config_config.get('Cmd') or ['/bin/sh'],
+                "env": image_config_config.get('Env') or [],
+                "cwd": workdir or image_config_config.get('WorkingDir') or '/'
             },
             "root": {
                 "path": str(self.filesystem.path),
@@ -201,7 +198,7 @@ class Container():
         if layer is None:
             raise OCIError('Container (%s) can not create filesystem witout image (%s) top layer' % 
                 (self.id, self.image.name))
-        self.filesystem = layer.create_child_filesystem(self.id)
+        self.filesystem = Driver().create_filesystem(layer)
 
     def create_container(self):
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
@@ -233,7 +230,7 @@ class Container():
     def remove_filesystem(self):
         if self.filesystem is None:
             raise OCIError('Container (%s) has no filesystem' % self.id)
-        Graph.driver().remove_filesystem(self.filesystem)
+        Driver().remove_filesystem(self.filesystem)
         self.filesystem = None
 
     def remove_container(self):

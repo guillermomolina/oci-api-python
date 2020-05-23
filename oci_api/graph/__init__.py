@@ -14,6 +14,8 @@
 
 from .exceptions import (
     FilesystemInUseException,
-    FilesystemUnknownException
+    FilesystemUnknownException,
+    LayerInUseException,
+    LayerUnknownException
 )
-from .graph import Graph
+from .driver import Driver

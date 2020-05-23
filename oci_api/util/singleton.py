@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from oci_api import OCIError
-from .zfs_driver import ZFSDriver
+# Singleton pattern as in
+# https://stackoverflow.com/questions/6760685/creating-a-singleton-in-python
 
-class Graph:
-    @classmethod
-    def driver(cls, driver_type='zfs'):
-        if driver_type != 'zfs':
-            raise OCIError('Unknown driver type (%s)' % driver_type)
-        return ZFSDriver()
+class Singleton(type):
+    _instances = {}
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]

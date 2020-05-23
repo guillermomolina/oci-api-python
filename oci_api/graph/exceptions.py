@@ -19,3 +19,9 @@ class FilesystemInUseException(OCIException):
 
 class FilesystemUnknownException(OCIException):
     pass
+
+class LayerInUseException(OCIException):
+    pass
+
+class LayerUnknownException(OCIException):
+    pass

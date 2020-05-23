@@ -15,16 +15,14 @@
 
 import secrets
 import random
+import string
 from .random_names import left, right
 
 def generate_random_sha256():
-    return secrets.token_hex(nbytes=32)
+    return secrets.token_hex(32)
 
-def generate_random_id():
-    return secrets.token_hex(nbytes=8)
-
-def digest_to_id(digest):
-    return digest.split(':')[1]
+def generate_random_filesystem_id():
+   return ''.join(random.choices(string.ascii_uppercase + string.digits, k=16))
 
 # Based on: https://github.com/moby/moby/blob/master/pkg/namesgenerator/names-generator.go
 def generate_random_name(exclude_list=None):

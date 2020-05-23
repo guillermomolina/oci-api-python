@@ -19,10 +19,10 @@ oci_config = {
         'path': '/var/lib/oci',
         'run_path': '/var/run/oci'
     },
-    'graph': {
-        'driver': 'zfs',
+    'driver': {
+        'type': 'zfs',
         'zfs': {
-            'filesystem': 'rpool/oci',
+            'base': 'rpool/oci',
             'compression': 'lz4',
 #            'compression': 'off',
         }

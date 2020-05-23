@@ -15,129 +15,145 @@
 import json
 import pathlib
 import logging
-from oci_spec.distribution.v1 import RepositoryList
 from oci_api import oci_config, OCIError
-from .repository import Repository
-from .exceptions import ImageInUseException, ImageUnknownException
+from oci_api.util import Singleton, normalize_image_name, split_image_name
+from oci_api.util.file import rm
+from .image import Image
+from .exceptions import ImageInUseException, ImageUnknownException, TagUnknownException
 
 log = logging.getLogger(__name__)
 
-def split_image_name(image_name):
-    splitted_image_name = image_name.split(':')            
-    if len(splitted_image_name) == 1:
-        splitted_image_name.append('latest')
-    elif len(splitted_image_name) != 2:
-        raise OCIError('Invalid image name (%s)' % image_name)
-    return tuple(splitted_image_name)
-
-class Distribution():
+class Distribution(metaclass=Singleton):
     def __init__(self):
         log.debug('Creating instance of %s()' % type(self).__name__)
-        self.repositories = None
-        distribution_file_path = pathlib.Path(oci_config['global']['path'], 
-            'distribution.json')
+        self.images = None
+        distribution_path = pathlib.Path(oci_config['global']['path'])
+        distribution_file_path = distribution_path.joinpath('distribution.json')
         if distribution_file_path.is_file():
             self.load()
         else:
             self.create()
 
     def load(self):
+        if self.images is not None:
+            raise OCIError('Distribution already loaded')
         distribution_path = pathlib.Path(oci_config['global']['path'])
         distribution_file_path = distribution_path.joinpath('distribution.json')
         log.debug('Start loading distribution file (%s)' % distribution_file_path)
         if not distribution_file_path.is_file():
             raise OCIError('Distribution file (%s) does not exist' % distribution_file_path)
-        repository_list = RepositoryList.from_file(distribution_file_path)
-        self.repositories = {}
-        for repository_name in repository_list.get('Repositories'):
-            log.debug('Found repository (%s)' % repository_name)
-            repository = Repository(repository_name)
-            self.repositories[repository_name] = repository
+        with distribution_file_path.open() as distribution_file:
+            self.images = {}
+            images_json = json.load(distribution_file)
+            for image_json in images_json['images']:
+                image_id = image_json['id']
+                tags = image_json['tags'] or []
+                from .image import Image
+                image = Image(image_id, tags)
+                self.images[image_id] = image
         log.debug('Finish loading distribution file (%s)' % distribution_file_path)
 
     def create(self):
-        distribution_file_path = pathlib.Path(oci_config['global']['path'], 
-            'distribution.json')
+        distribution_path = pathlib.Path(oci_config['global']['path'])
+        distribution_file_path = distribution_path.joinpath('distribution.json')
         log.debug('Start creating distribution file (%s)' % distribution_file_path)
+        if self.images is not None:
+            raise OCIError('Distribution repositories is already initialized, can not create')
         if distribution_file_path.is_file():
             raise OCIError('Distribution file (%s) already exists' % distribution_file_path)
-        self.repositories = {}
-        log.debug('Finish creating distribution file (%s)' % distribution_file_path)
+        self.images = {}
         self.save()
+        log.debug('Finish creating distribution file (%s)' % distribution_file_path)
 
     def save(self):
         distribution_path = pathlib.Path(oci_config['global']['path'])
         distribution_file_path = distribution_path.joinpath('distribution.json')
         log.debug('Start saving distribution file (%s)' % distribution_file_path)
+        if self.images is None:
+            raise OCIError('Distribution is not initialized, can not save')
         if not distribution_path.is_dir():
             distribution_path.mkdir(parents=True)
-        repository_list_json = {
-            'repositories': list(self.repositories.keys())
+        images_json = []
+        for image in self.images.values():
+            images_json.append({
+                'id': image.id,
+                'tags': image.tags
+            })
+        distribution_json = {
+            'images': images_json
         }
-        repository_list = RepositoryList.from_json(repository_list_json)
-        repository_list.save(distribution_file_path)
+        with distribution_file_path.open('w') as distribution_file:
+            json.dump(distribution_json, distribution_file, separators=(',', ':'))
         log.debug('Finish saving distribution file (%s)' % distribution_file_path)
 
-    def get_repository(self, repository_name):
-        try:
-            return self.repositories[repository_name]
-        except:
-            raise ImageUnknownException('Repository (%s) does not exist' % repository_name)
+    def get_repositories(self, image):
+        tags = image.tags
+        repositories = []
+        for repository_and_tag in tags:
+            (repository, tag) = split_image_name(repository_and_tag)
+            repositories.append(repository)
+        return repositories
 
+    def get_image_by_id(self, image_id):        
+        for image in self.images.values():                
+            if image.id == image_id:
+                return image
+            if image.small_id == image_id:
+                return image
+        raise ImageUnknownException('Image (%s) is unknown' % image_id)
+        
     def get_image(self, image_ref):        
         # image_ref, can either be:
-        # small id (6 bytes, 12 octets, 96 bits), the first 12 octets from id
-        # id (16 bytes, 32 octets, 256 bits), the sha256 hash
-        # name of the repository (tag implied as latest)
-        # repository_name:tag
-        repository_name, tag = split_image_name(image_ref)
-        for repository in self.repositories.values():
-            for image in repository.images.values():                
-                if image.id == image_ref:
-                    return image
-                if image.small_id == image_ref:
-                    return image
-                if image.repository == repository_name and image.tag == tag:
+        # - small id (6 bytes, 12 octets, 96 bits), the first 12 octets from id
+        # - id (16 bytes, 32 octets, 256 bits), the sha256 hash
+        # - name (tag implied as latest)
+        # - name:tag
+        try:
+            return self.get_image_by_id(image_ref)
+        except ImageUnknownException:
+            image_name = normalize_image_name(image_ref)
+            for image in self.images.values():
+                if image_name in image.tags:
                     return image
         raise ImageUnknownException('Image (%s) is unknown' % image_ref)
 
-    def remove_image(self, image_name):
-        log.debug('Start removing image (%s)' % image_name)
-        image = self.get_image(image_name)
-        repository_name = image.repository
-        tag = image.tag
-        repository = self.get_repository(repository_name)
-        repository.remove_image(tag)
-        if repository.index is None:
-            del self.repositories[repository_name]
-            self.save()
-        log.debug('Finish removing image (%s)' % image_name)
-
-    def save_image(self, image_name, layout_path):
-        log.debug('Start exporting image (%s)' % image_name)
-        repository_name, tag = split_image_name(image_name)
-        repository = self.get_repository(repository_name)
-        repository.save_image(tag, layout_path)
-        log.debug('Finish exportig image (%s)' % image_name)
-
-    def load_image(self, image_name, layout_path):
-        log.debug('Start importing image (%s)' % image_name)
-        repository_name, tag = split_image_name(image_name)
-        repository = self.repositories.get(repository_name, Repository(repository_name))
-        image = repository.load_image(tag, layout_path)
-        if repository_name not in self.repositories:
-            self.repositories[repository_name] = repository
-            self.save()
-        log.debug('Finish importing image (%s)' % image_name)
+    def create_image(self, config, layers):
+        log.debug('Start creating image')
+        image = Image.create(config, layers)
+        self.images[image.id] = image
+        self.save()
+        log.debug('Finish creating image (%s)' % image.id)
         return image
 
-    def import_image(self, image_name, rootfs_tar_path, image_config):
-        log.debug('Start creating image (%s)' % image_name)
-        repository_name, tag = split_image_name(image_name)
-        repository = self.repositories.get(repository_name, Repository(repository_name))
-        image = repository.import_image(tag, rootfs_tar_path, image_config)
-        if repository_name not in self.repositories:
-            self.repositories[repository_name] = repository
+    def remove_image(self, image, force=False):
+        image_id = image.id
+        log.debug('Start removing image (%s)' % image_id)
+        if self.images is None:
+            raise ImageUnknownException('Distribution images is not initialized, can not remove image (%s)' % image_id)
+        if image_id not in self.images:
+            raise ImageUnknownException('Image is unknown, can not remove image (%s)' % image_id)
+        image.destroy()
+        del self.images[image_id]
+        self.save()
+        log.debug('Finish removing image (%s)' % image_id)
+
+    def add_tag(self, image, tag):
+        log.debug('Start adding tag (%s) to image (%s)' % (tag, image.id))
+        normalized_tag = normalize_image_name(tag)
+        try:
+            other_image = self.get_image(normalized_tag)
+            if other_image != image:
+                self.remove_tag(other_image, normalized_tag)
+                image.add_tag(normalized_tag)
+                self.save()
+        except ImageUnknownException:
+            image.add_tag(normalized_tag)
             self.save()
-        log.debug('Finish creating image (%s)' % image_name)
-        return image
+        log.debug('Finish adding tag (%s) to image (%s)' % (tag, image.id))
+
+    def remove_tag(self, image, tag):
+        log.debug('Start removing tag (%s) from image (%s)' % (tag, image.id))
+        normalized_tag = normalize_image_name(tag)
+        image.remove_tag(normalized_tag)
+        self.save()
+        log.debug('Finish removing tag (%s) from image (%s)' % (tag, image.id))

@@ -16,11 +16,13 @@ from .exceptions import (
     ImageUnknownException,
     ImageExistsException,
     ImageInUseException, 
-    LayerInUseException
+    TagUnknownException
 )
-from .layer import Layer
-from .image import Image
-from .repository import Repository
+
 from .distribution import Distribution
 
-
+from .image import (
+    create_config,
+    config_set_command,
+    config_add_diff
+)

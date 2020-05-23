@@ -23,5 +23,5 @@ class ImageExistsException(OCIException):
 class ImageInUseException(OCIException):
     pass
 
-class LayerInUseException(OCIException):
+class TagUnknownException(OCIException):
     pass

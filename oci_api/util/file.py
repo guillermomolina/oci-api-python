@@ -23,27 +23,33 @@ from oci_api import OCIError
 log = logging.getLogger(__name__)
 
 def sha256sum(file_path):
+    log.debug('Start getting hash of file (%s)' % file_path)
     cmd = ['/usr/bin/sha256sum', str(file_path)]
     log.debug('Running command: "' + ' '.join(cmd) + '"')
     sha256sum_run = subprocess.run(cmd, capture_output=True)
+    sha256sum_result = None
     if sha256sum_run.returncode == 0:
         sha256sum_stdout = str(sha256sum_run.stdout.decode('utf-8'))
         records = sha256sum_stdout.split(' ')  
-        return records[0]
-    return None
+        sha256sum_result = records[0]
+    log.debug('Finish getting hash of file (%s)' % file_path)
+    return sha256sum_result
 
 def tar(dir_path, tar_file_path=None, compress=False):
-    args = '-c'
-    if compress:
-        args += 'z'
     if tar_file_path is None:
         tar_file_path_str = '-'
     else:
         tar_file_path_str = str(tar_file_path)
+    log.debug('Start extracting from tar file (%s)' % tar_file_path_str)
+    args = '-c'
+    if compress:
+        args += 'z'
     cmd = ['/usr/gnu/bin/tar', args, '-f', tar_file_path_str]
     cmd += [ str(f.relative_to(dir_path)) for f in dir_path.glob('*') ]
     log.debug('Running command: "cd ' + str(dir_path) + ';' + ' '.join(cmd) + '"')
-    return subprocess.call(cmd, cwd=dir_path)
+    result = subprocess.call(cmd, cwd=dir_path)
+    log.debug('Finish extracting from tar file (%s)' % tar_file_path_str)
+    return result
 
 def untar(dir_path, tar_file_path=None, tar_file=None):
     if tar_file_path is not None:
@@ -54,11 +60,16 @@ def untar(dir_path, tar_file_path=None, tar_file=None):
         stdin = tar_file
     else:
         raise OCIError('untar error either tar_file_path or tar_file is needed')
+    log.debug('Start inserting into tar file (%s)' % tar_file_path_str)
     cmd = ['/usr/gnu/bin/tar', '-x', '-f', tar_file_path_str]
     log.debug('Running command: "cd ' + str(dir_path) + ';' + ' '.join(cmd) + '"')
-    return subprocess.call(cmd, cwd=dir_path, stdin=stdin)
+    result = subprocess.call(cmd, cwd=dir_path, stdin=stdin)
+    log.debug('Finish inserting into tar file (%s)' % tar_file_path_str)
+    return result
 
-def uncompress(compressed_file_path, uncompressed_file_path, method='gz'):
+def uncompress(compressed_file_path, uncompressed_file_path=None, method='gz', 
+        keep_original=False, force=True):
+    log.debug('Start uncompressing file (%s)' % compressed_file_path)
     commands  = {
         'xz': ['/usr/bin/xzcat'],
         'gz': ['/usr/bin/gzcat'],
@@ -71,13 +82,31 @@ def uncompress(compressed_file_path, uncompressed_file_path, method='gz'):
         raise OCIError('method (%s) not supported' % method)
     cmd.append(str(compressed_file_path))
 
+    if uncompressed_file_path is None:
+        if compressed_file_path.suffix == 'method':
+            uncompressed_file_path = compressed_file_path.parent.joinpath(compressed_file_path.stem)
+        else:
+            raise NotImplementedError()
+    if uncompressed_file_path.is_file():
+        if force:
+            rm(uncompressed_file_path)
+        else:
+            raise OCIError('Target file (%s) allready exist, can not uncompress' % str(uncompressed_file_path))
+    result = None
     with open(uncompressed_file_path, 'wb') as uncompressed_file:
         log.debug('Start running command: "' + ' '.join(cmd) + ' > %s"' % uncompressed_file_path)
         rc =  subprocess.call(cmd,  stdout=uncompressed_file)
         log.debug('Finish running command: "' + ' '.join(cmd) + ' > %s"' % uncompressed_file_path)
-        return rc
+        if rc == 0:
+            if not keep_original:
+                rm(compressed_file_path)
+            result = uncompressed_file_path
+    log.debug('Finish uncompressing file (%s)' % compressed_file_path)
+    return result
 
-def compress(file_path, method='gz', parallel=True, keep_original=False):
+def compress(uncompressed_file_path, compressed_file_path=None, method='gz', 
+        keep_original=False, force=True, parallel=True):
+    log.debug('Start compressing file (%s)' % uncompressed_file_path)
     commands  = {
         'xz': ['/usr/bin/xz'],
         'gz': ['/usr/bin/gzip'],
@@ -95,23 +124,37 @@ def compress(file_path, method='gz', parallel=True, keep_original=False):
         cmd = commands.get(method, None)
     if cmd is None:
         raise OCIError('method (%s) not supported' % method)
-
-    if keep_original:
-        cmd.append('--keep')
+    cmd.append('--stdout')
         
-    cmd.append(str(file_path))
-    log.debug('Running command: "' + ' '.join(cmd) + '"')
-    if subprocess.call(cmd) == 0:
-        compressed_file_path = file_path.with_suffix(file_path.suffix + '.' + method)
-        if compressed_file_path.is_file():
-            return compressed_file_path
-    return None
+    cmd.append(str(uncompressed_file_path))
+    if compressed_file_path is None:
+        compressed_file_path = uncompressed_file_path.with_suffix(uncompressed_file_path.suffix +
+            '.' + method)
+
+    if compressed_file_path.is_file():
+        if force:
+            rm(compressed_file_path)
+        else:
+            raise OCIError('Target file (%s) allready exist, can not compress' % str(compressed_file_path))
+    result = None
+    with open(compressed_file_path, 'wb') as compressed_file:
+        log.debug('Start running command: "' + ' '.join(cmd) + ' > %s"' % compressed_file_path)
+        rc =  subprocess.call(cmd,  stdout=compressed_file)
+        log.debug('Finish running command: "' + ' '.join(cmd) + ' > %s"' % compressed_file_path)
+        if rc == 0:
+            if not keep_original:
+                rm(uncompressed_file_path)
+            result = compressed_file_path
+    log.debug('Finish compressing file (%s)' % uncompressed_file_path)
+    return result
 
 def du(dir_name):
+    log.debug('Start calculating disk usage at (%s)' % str(dir_name))
     cmd = ['/usr/gnu/bin/du', '-bs', str(dir_name)]
     log.debug('Running command: "' + ' '.join(cmd) + '"')
     output = subprocess.check_output(cmd)
     value = output.decode('utf-8').split()[0]
+    log.debug('Finish calculating disk usage at (%s)' % str(dir_name))
     return int(value)
         
 def rm(file_name, retries=5, sleep=1, recursive=False):
@@ -134,4 +177,13 @@ def rm(file_name, retries=5, sleep=1, recursive=False):
                 str(file_name), i))
             time.sleep(sleep)
     return -1
-
+      
+def cp(src_file_path, dst_file_path):
+    log.debug('Start copying (%s) to (%s)' % (src_file_path, dst_file_path))
+    shutil.copy(src_file_path, dst_file_path)
+    log.debug('Finish copying (%s) to (%s)' % (src_file_path, dst_file_path))
+      
+def mv(src_file_path, dst_file_path):
+    log.debug('Start moving (%s) to (%s)' % (src_file_path, dst_file_path))
+    shutil.move(src_file_path, dst_file_path)
+    log.debug('Finish moving (%s) to (%s)' % (src_file_path, dst_file_path))
