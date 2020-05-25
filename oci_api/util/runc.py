@@ -19,30 +19,34 @@ import logging
 
 log = logging.getLogger(__name__)
 
-def runc(command,  options=None, arguments=None):
+class RunCError(Exception):
+    pass
+
+def runc(command,  options=None, arguments=None, stdout=None):
     cmd = ['runc', command]
     if options is not None:
         cmd += options
     if arguments is not None:
         cmd += arguments
-    with open('/dev/null', 'w') as dev_null:
-        log.debug('Running command: "' + ' '.join(cmd) + '"')
-        return subprocess.call(cmd, stderr=dev_null)
-    return -1
+    log.debug('Running command: "' + ' '.join(cmd) + '"')
+    process = subprocess.Popen(cmd, stdout=stdout)
+    stdout, stderr = process.communicate()
+    if process.returncode != 0:
+        raise RunCError(stderr)
 
 def runc_create(container_id, bundle_path=None):
     arguments = [container_id]
     options = None
     if bundle_path is not None:
         options = ['-b', str(bundle_path)]
-    return runc('create', options, arguments)
+    runc('create', options, arguments)
 
 def runc_delete(container_id, force=False):
     arguments = [container_id]
     options = None
     if force:
         options = ['--force']
-    return runc('delete', options, arguments)
+    runc('delete', options, arguments)
 
 def runc_exec(container_id, command, args=None):
     raise NotImplementedError()
@@ -50,9 +54,9 @@ def runc_exec(container_id, command, args=None):
     options = None
     if args is not None:
         arguments += args
-    return runc('exec', options, arguments)
+    runc('exec', options, arguments)
 
 def runc_start(container_id):
     arguments = [container_id]
     options = None
-    return runc('start', options, arguments)
+    runc('start', options, arguments)

@@ -18,6 +18,8 @@ import tarfile
 import tempfile
 import humanize
 from oci_api import OCIError, oci_config
+from oci_api.util import operating_system
+from oci_api.util.random import generate_random_filesystem_id
 from oci_api.util.zfs import zfs_create, zfs_get, zfs_set, zfs_snapshot, zfs_destroy, \
     zfs_clone, zfs_diff, zfs_is_filesystem, zfs_rename
 from oci_api.util.file import rm, untar, uncompress, du, sha256sum
@@ -39,6 +41,28 @@ def create_base_zfs():
             raise OCIError('Could not create base zfs (%s)' % base_zfs)
 
 class ZFSFilesystem(Filesystem):
+    @classmethod
+    def create(cls, layer):
+        create_base_zfs()
+        filesystem_id = generate_random_filesystem_id()
+        zfs_filesystem = '%s/%s' % (oci_config['driver']['zfs']['base'], filesystem_id)
+        mountpoint = pathlib.Path(oci_config['global']['path'], 'filesystems', filesystem_id)
+        if layer is None:
+            log.debug('Creating filesystem (%s)' % zfs_filesystem)
+            zfs_filesystem = zfs_create(zfs_filesystem, mountpoint=mountpoint)
+            if zfs_filesystem != zfs_filesystem:
+                raise OCIError('Could not create zfs filesystem (%s)' % zfs_filesystem)
+        else:
+            origin = layer.filesystem
+            log.debug('Cloning filesystem (%s) from (%s)' 
+                % (zfs_filesystem, origin.zfs_snapshot))
+            zfs_filesystem = zfs_clone(zfs_filesystem, origin.zfs_snapshot, 
+                mountpoint=mountpoint)
+            if zfs_filesystem != zfs_filesystem:
+                raise OCIError('Could not clone zfs filesystem (%s) from zfs snapshot (%s)' % 
+                    (zfs_filesystem, origin.zfs_snapshot))
+        return Filesystem(filesystem_id, layer, None)
+
     @property
     def zfs_filesystem(self):
         base_zfs_filesystem = oci_config['driver']['zfs']['base']
@@ -48,6 +72,10 @@ class ZFSFilesystem(Filesystem):
     def zfs_snapshot(self):
         return '%s@diff' % self.zfs_filesystem
 
+    @property
+    def path(self):
+        return zfs_get(self.zfs_filesystem, 'mountpoint')
+
     def size(self):
         return du(self.path)
 
@@ -55,64 +83,23 @@ class ZFSFilesystem(Filesystem):
         # compressed and/or deduplicated size is smaller than actuall size
         return zfs_get(self.zfs_filesystem, 'used')
 
-    '''def diff_size(self):
-        log.debug('Start calculating diff size (%s)' % self.id)
-        origin_snapshot = None
-        if self.origin is not None:
-            origin_snapshot = self.origin.zfs_snapshot
-        path = self.path
-        size = 0
-        for change_info in zfs_diff(self.zfs_snapshot, origin_snapshot, include_file_types=True):
-            change_type = change_info[0]
-            file_type = change_info[1]
-            if (change_type == 'M' or change_type == '+') and file_type == 'F':
-                    file_path = pathlib.Path(change_info[2])
-                    file_size = file_path.stat().st_size
-                    #log.debug('File %s, size %d' % (file_path, file_size))
-                    size += file_size
-        log.debug('Finish calculating diff size (%s)' % self.id)
-        return size'''
-
-    def create(self):
-        create_base_zfs()
-        if self.layer is None:
-            log.debug('Creating filesystem (%s)' % self.zfs_filesystem)
-            zfs_filesystem = zfs_create(self.zfs_filesystem, mountpoint=self.path)
-            if zfs_filesystem != self.zfs_filesystem:
-                raise OCIError('Could not create zfs filesystem (%s)' % self.zfs_filesystem)
-        else:
-            origin = self.layer.filesystem
-            log.debug('Cloning filesystem (%s) from (%s)' 
-                % (self.zfs_filesystem, origin.zfs_snapshot))
-            zfs_filesystem = zfs_clone(self.zfs_filesystem, origin.zfs_snapshot, 
-                mountpoint=self.path)
-            if zfs_filesystem != self.zfs_filesystem:
-                raise OCIError('Could not clone zfs filesystem (%s) from zfs snapshot (%s)' % 
-                    (self.zfs_filesystem, origin.zfs_snapshot))
-
     def destroy(self):
+        path = self.path
         if zfs_destroy(self.zfs_filesystem, recursive=True) != 0:
             raise OCIError('Could not destroy zfs filesystem (%s)' % self.zfs_filesystem)
-        rm(self.path)
+        if path is not None:
+            rm(path)
 
     def commit(self, changeset_file_path):
-        zfs_set(self.zfs_filesystem, readonly=True)
         zfs_snapshot('diff', self.zfs_filesystem)
         self.save_changeset(changeset_file_path)
         diff_id = sha256sum(changeset_file_path)
         if diff_id is None:
             raise OCIError('Could not get hash of file (%s)' % str(changeset_file_path))
-
-        new_zfs_filesystem = oci_config['driver']['zfs']['base'] + '/' + diff_id
-        if zfs_is_filesystem(new_zfs_filesystem):
-            raise FilesystemInUseException(diff_id)
-
-        previous_zfs_filesystem = self.zfs_filesystem
         previous_path = self.path
-        self.id = diff_id
-        zfs_rename(previous_zfs_filesystem, self.zfs_filesystem)
-        zfs_set(self.zfs_filesystem, mountpoint=self.path)
+        zfs_set(self.zfs_filesystem, mountpoint='none')
         rm(previous_path)
+        return diff_id
     
     def load_changeset(self, changeset_file_path):
         log.debug('Start loading changeset (%s)' % str(changeset_file_path))
@@ -155,3 +142,27 @@ class ZFSFilesystem(Filesystem):
                             file_path = pathlib.Path(change_info[2])
                             tar_file.add(file_path, arcname=file_path.relative_to(path), recursive=False)
         log.debug('Finish saving changeset (%s)' % str(changeset_file_path))
+
+    def mount(self, container_id, path):
+        if self.container_id is not None:
+            if self.container_id == container_id:
+                log.warning('Filesystem (%s) already mounted for container (%s)' % (self.id, container_id))
+                if self.path != path:
+                    raise OCIError('Filesystem (%s) path (%s) should be (%s)' % (self.id, self.path, path))
+            else:
+                raise OCIError('Filesystem (%s) already mounted for container (%s)' % (self.id, self.container_id))
+        else:
+            self.container_id = container_id
+            previous_path = self.path
+            zfs_set(self.zfs_filesystem, mountpoint=path)
+            rm(previous_path)
+
+    def unmount(self, container_id):
+        if self.container_id is None:
+            raise OCIError('Filesystem (%s) is not mounted' % self.id)
+        if self.container_id != container_id:
+            raise OCIError('Filesystem (%s) mounted for container (%s), not (%s)' % 
+                (self.id, self.container_id, container_id))
+        self.container_id = None
+        mountpoint = pathlib.Path(oci_config['global']['path'], 'filesystems', self.id)
+        zfs_set(self.zfs_filesystem, mountpoint=mountpoint)

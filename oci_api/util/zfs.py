@@ -71,10 +71,17 @@ def zfs_clone(zfs_name, snapshot, parent=None, mountpoint=None):
         return filesystem
     return None
 
-def zfs_set(zfs_name, readonly=None, mountpoint=None):
+def zfs_set(zfs_name, readonly=None, mountpoint=None, mounted=None):
     if readonly is not None:
         option = 'readonly='
         if readonly:
+            option += 'on'
+        else:
+            option += 'off'
+        zfs('set', [option, zfs_name])
+    if mounted is not None:
+        option = 'mounted='
+        if mounted:
             option += 'on'
         else:
             option += 'off'

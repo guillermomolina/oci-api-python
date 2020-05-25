@@ -151,7 +151,7 @@ class Image():
 
     def size(self):
         if self.layers is not None and len(self.layers) != 0:
-            return sum([layer.size() for layer in self.layers])
+            return sum([layer.size for layer in self.layers])
         return None
 
     def virtual_size(self):
@@ -205,6 +205,9 @@ class Image():
             raise OCIError('Can not destroy image (%s)' % self.id)
         if len(Driver().get_child_filesystems(self.top_layer())) != 0:
             raise ImageInUseException()
+        for tag in self.tags:
+            self.remove_tag(tag)
+        self.tags = None
         self.destroy_manifest()
 
     def destroy_manifest(self):
@@ -217,9 +220,8 @@ class Image():
         manifest_digest = self.digest
         manifest_file_path = manifests_path.joinpath(self.id)
         rm(manifest_file_path)
-        self.history = None
         self.manifest = None
-        log.info('Deleted: %s' % manifest_digest)
+        log.info('Deleted manifest: %s' % manifest_digest)
         log.debug('Finish removing image (%s) manifest' % self.id)
 
     def remove_layers(self):
@@ -246,7 +248,7 @@ class Image():
         config_file_path = configs_path.joinpath(config_id)
         rm(config_file_path)
         self.config = None
-        log.info('Deleted: %s' % config_digest)
+        log.info('Deleted config: %s' % config_digest)
         log.debug('Finish removing image (%s) config' % self.id)
 
     def add_tag(self, tag):
@@ -257,4 +259,5 @@ class Image():
     def remove_tag(self, tag):
         if tag not in self.tags:
             raise OCIError('Image (%s) does not have tag (%s)' % (self.id, tag))
+        log.info('Untagged: ' + tag)
         self.tags.remove(tag)

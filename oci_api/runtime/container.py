@@ -9,51 +9,97 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
+# See the License for the configific language governing permissions and
 # limitations under the License.
 
 import json
 import pathlib
 import tempfile
 import logging
-from dateutil import parser
 from datetime import datetime, timezone
-from oci_spec.runtime.v1 import Spec, State
+from oci_spec.runtime.v1 import Spec, Platform, Process, User, Root, Solaris, SolarisAnet, State
 from oci_api import oci_config, OCIError
-from oci_api.util import generate_random_sha256, digest_to_id, id_to_digest
+from oci_api.util import generate_random_sha256, digest_to_id, id_to_digest, operating_system, architecture
 from oci_api.util.runc import runc_create, runc_delete, runc_exec, \
     runc_start
 from oci_api.util.file import rm
 from oci_api.graph import Driver
-from oci_api.image import Distribution
 
 log = logging.getLogger(__name__)
 
+def check_free_runc_id(runc_id):
+    # TODO: check if there is no other runc container with id == self.runc_id
+    # return True if we are ok to use it, False otherwise
+    return True
+
 class Container():
-    def __init__(self, id=None):
-        log.debug('Creating instance of %s(%s)' % (type(self).__name__, id or ''))
+    @classmethod
+    def create(cls, image, name, command=None, workdir=None):
+        log.debug('Start creating container named (%s) from image (%s)' % (name, image.id))
+        create_time = datetime.utcnow()
+        os = image.config.get('OS')
+        if os != operating_system():
+            raise OCIError('Image (%s) operating system (%s) is not supported' % (image.id, os))
+        arch = image.config.get('Architecture')
+        if arch != architecture():
+            raise OCIError('Image (%s) operating system (%s) is not supported' % (image.id, os))
+        while True:
+            container_id = generate_random_sha256()
+            runc_id = container_id[:12]
+            if check_free_runc_id(runc_id):
+                break
+        image_config_config = image.config.get('Config')
+        args = command or image_config_config.get('Cmd') or ['/bin/sh']
+        env = image_config_config.get('Env') or []
+        cwd = workdir or image_config_config.get('WorkingDir') or '/'
+        layer = image.top_layer()
+        container_path = pathlib.Path(oci_config['global']['path'], 'containers', container_id)
+        if not container_path.is_dir():
+            container_path.mkdir(parents=True)
+        rootfs_path = container_path.joinpath('rootfs')
+        root_path = rootfs_path
+        solaris = None
+        if os == 'SunOS':
+            solaris = Solaris(anet=[SolarisAnet()])
+            root_path = rootfs_path.joinpath('root')
+        filesystem = Driver().create_filesystem(layer)
+        Driver().mount_filesystem(filesystem, container_id, root_path)
+        config = Spec(
+            platform=Platform(os=os, arch=arch),
+            hostname=runc_id,
+            process=Process(terminal=True, user=User(uid=0, gid=0), args=args, env=env, cwd=cwd),
+            root=Root(path=str(rootfs_path), readonly=False),
+            solaris=solaris
+        )
+        config_file_path = container_path.joinpath('config.json')
+        config.save(config_file_path)
+        runc_create(runc_id, container_path)
+        log.debug('Finish creating container named (%s) from image (%s)' % (name, image.id))
+        return cls(container_id, name, create_time)
+
+    def __init__(self, id, name, create_time):
+        log.debug('Creating instance of %s(%s)' % (type(self).__name__, id))
         self.id = id
-        self.runc_id = None
-        self.name = None 
-        self.create_time = None
+        self.name = name 
+        self.create_time = create_time
         self.config = None
-        self.image = None
-        self.filesystem = None
         self.load()
 
     @property
     def small_id(self):
-        if self.id is not None:
-            return self.id[:12]
+        return self.id[:12]
+
+    @property
+    def runc_id(self):
+        return self.small_id
 
     @property
     def state_change_time(self):
-        if self.id is not None:
-            zones_path = pathlib.Path('/var/run/zones/state')
-            state_file_path = zones_path.joinpath(self.runc_id + '.state')
-            if state_file_path.is_file():
-                return datetime.fromtimestamp(state_file_path.lstat().st_mtime, 
-                    tz=timezone.utc)
+        zones_path = pathlib.Path('/var/run/zones/state')
+        state_file_path = zones_path.joinpath(self.runc_id + '.state')
+        if state_file_path.is_file():
+            return datetime.fromtimestamp(state_file_path.lstat().st_mtime, 
+                tz=timezone.utc)
         return None
 
     def status(self):
@@ -63,189 +109,58 @@ class Container():
         return None
 
     def state(self):
-        if self.id is not None:
-            zones_path = pathlib.Path('/var/run/zones/state')
-            state_file_path = zones_path.joinpath(self.runc_id + '.state')
-            if state_file_path.is_file():
-                return State.from_file(state_file_path)
-            container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
-            return State(
-                id=self.runc_id,
-                status='exited',
-                bundlepath=str(container_path)
-            )
-        return None
-
-    def load(self):
-        if self.id is not None:
-            container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
-            container_file_path = container_path.joinpath('container.json')
-            with container_file_path.open() as container_file:
-                container = json.load(container_file)
-                self.runc_id = container['runc_id']
-                self.name = container['name']
-                self.create_time = parser.isoparse(container['create_time'])
-                self.load_image(container['image_id'])
-                self.load_filesystem(container['filesystem_id'])
-                self.load_config()
-    
-    def load_config(self):
-        if self.id is not None:
-            container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
-            config_file_path = container_path.joinpath('config.json')
-            if config_file_path.is_file():
-                self.config = Spec.from_file(config_file_path)
-
-    def load_filesystem(self, filesystem_id):
-        self.filesystem = Driver().get_filesystem(filesystem_id)
-
-    def load_image(self, image_ref):
-        self.image = Distribution().get_image(image_ref)
-
-    def save(self):
-        if self.id is None:
-            raise OCIError('Can not save container, unknown id')
+        zones_path = pathlib.Path('/var/run/zones/state')
+        state_file_path = zones_path.joinpath(self.runc_id + '.state')
+        if state_file_path.is_file():
+            return State.from_file(state_file_path)
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
-        if not container_path.is_dir():
-            container_path.mkdir(parents=True)
-        container_file_path = container_path.joinpath('container.json')
-        container = {
+        return State(
+            id=self.runc_id,
+            status='exited',
+            bundlepath=str(container_path)
+        )
+    
+    def to_json(self):
+        return {
             'id': self.id,
             'name': self.name,
-            'runc_id': self.runc_id,
-            'image_id': self.image.id,
-            'filesystem_id': self.filesystem.id,
             'create_time': self.create_time.strftime('%Y-%m-%dT%H:%M:%S.%f000Z')
         }
-        with container_file_path.open('w') as container_file:
-            json.dump(container, container_file, separators=(',', ':'))
-        self.save_config()
 
-    def save_config(self):
-        if self.config is None:
-            raise OCIError('Config is not initialized, can not save container (%s)'
-                 % self.id)
-        container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
-        if not container_path.is_dir():
-            container_path.mkdir(parents=True)
-        config_file_path = container_path.joinpath('config.json')
-        self.config.save(config_file_path)
-
-    def check_runc_id(self):
-        # TODO: check if there is no other runc container with id == self.runc_id
-        # return True if we are ok to use it, False otherwise
-        return True
-
-    def create(self, image_name, name, command=None, workdir=None):
-        self.create_time = datetime.utcnow()
-        self.load_image(image_name)
-        self.name = name
-        while True:
-            self.id = generate_random_sha256()
-            self.runc_id = self.small_id # AKA: zonename
-            if self.check_runc_id():
-                break
-        self.create_filesystem()
-        self.create_config(command, workdir)
-        self.save()
-        self.create_container()
-    
-    def create_config(self, command=None, workdir=None):
-        if self.image is None:
-            raise OCIError('Could not create config for container (%s), there is no image'
-                % self.id)
-        image_config = self.image.config
-        if image_config is None:
-            raise OCIError('Could not create config for container (%s), there is no image config'
-                % self.id)
-        image_config_config = image_config.get('Config')
-        if image_config is None:
-            raise OCIError('Could not create config for container (%s), there is no image config'
-                % self.id)
-        config_json = {
-            'ociVersion': '1.0.0',
-            'platform': {
-                'os': image_config.get('OS'),
-                'arch': image_config.get('Architecture'),
-            },
-            'hostname': self.runc_id,
-            'process': {
-                'terminal': True,
-                'user': {
-                    "uid": 0,
-                    "gid": 0
-                },
-                "args": command or image_config_config.get('Cmd') or ['/bin/sh'],
-                "env": image_config_config.get('Env') or [],
-                "cwd": workdir or image_config_config.get('WorkingDir') or '/'
-            },
-            "root": {
-                "path": str(self.filesystem.path),
-                "readonly": False
-            },
-            "solaris": {
-                "anet": [
-                    {}
-                ]
-            }
-        }
-        self.config = Spec.from_json(config_json)
-
-    def create_filesystem(self):
-        if self.image is None:
-            raise OCIError('Can not create filesystem witout image for container (%s)' % self.id)
-        layer = self.image.top_layer()
-        if layer is None:
-            raise OCIError('Container (%s) can not create filesystem witout image (%s) top layer' % 
-                (self.id, self.image.name))
-        self.filesystem = Driver().create_filesystem(layer)
-
-    def create_container(self):
+    def load(self):
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
         config_file_path = container_path.joinpath('config.json')
         if not config_file_path.is_file():
-            raise OCIError('Could not create container (%s), there is no config file'
-                % self.id)
-        if self.filesystem is None:
-            raise OCIError('Could not create container (%s), there is no filesystem'
-                % self.id)
-        runc_create(self.runc_id, container_path)
+            raise OCIError('Config file (%s) does not exist' % config_file_path)
+        self.config = Spec.from_file(config_file_path)
 
-    def remove(self):
-        if self.id is None:
-            raise OCIError('Can not remove container, unknown id')
-        container_status = self.status
+    def destroy(self, remove_filesystem=True):
+        container_id = self.id
+        log.debug('Start destroying container (%s)' % container_id)
+        container_status = self.status()
         if container_status != 'exited':
-            self.remove_container()
-        self.remove_filesystem()
+            self.delete_container()
+        Driver().unmount_filesystem(self.id, remove=remove_filesystem)
         container_path = pathlib.Path(oci_config['global']['path'], 'containers', self.id)
         rm(container_path.joinpath('config.json'))
-        rm(container_path.joinpath('container.json'))
-        self.config = None
+        rootfs_path = pathlib.Path(self.config.get('Root').get('Path'))
+        if self.config.get('Platform').get('OS') == 'SunOS':
+            rm(rootfs_path.joinpath('root'))
+        rm(rootfs_path)
         rm(container_path)
-        self.runc_id = None
-        self.image = None
+        self.config = None
         self.id = None
-        
-    def remove_filesystem(self):
-        if self.filesystem is None:
-            raise OCIError('Container (%s) has no filesystem' % self.id)
-        Driver().remove_filesystem(self.filesystem)
-        self.filesystem = None
+        self.name = None
+        self.create_time = None
+        log.debug('Finish destroying container (%s)' % container_id)
 
-    def remove_container(self):
-        if self.runc_id is None:
-            raise OCIError('Can not remove container, unknown container id')
+    def delete_container(self):
         container_status = self.status
         force = container_status == 'running'
-        if runc_delete(self.runc_id, force) != 0:
-            pass
-            #raise OCIError('Could not delete container')
+        runc_delete(self.runc_id, force)
 
     def exec(self, command, args=None):
         raise NotImplementedError()
-        if self.runc_id is None:
-            raise OCIError('Container (%s) can not exec commands' % self.id)
         runc_exec(self.runc_id, command, args)
 
     def start(self):
@@ -253,4 +168,4 @@ class Container():
         if container_state == 'created' or container_state == 'stopped':
             raise OCIError('Can not start container (%s) in state (%s)' % 
                 (self.id, container_state))
-        return runc_start(self.runc_id)
+        runc_start(self.runc_id)

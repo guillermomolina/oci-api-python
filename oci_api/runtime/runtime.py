@@ -15,14 +15,15 @@
 import json
 import pathlib
 import logging
+from dateutil import parser
 from oci_api import oci_config, OCIError
-from oci_api.util import generate_random_name
+from oci_api.util import Singleton, generate_random_name
 from .container import Container
 from .exceptions import ContainerUnknownException
 
 log = logging.getLogger(__name__)
 
-class Runtime():
+class Runtime(metaclass=Singleton):
     def __init__(self):
         log.debug('Creating instance of %s()' % type(self).__name__)
         self.containers = None
@@ -39,8 +40,11 @@ class Runtime():
         with runtime_file_path.open() as runtime_file:
             runtime = json.load(runtime_file)
             self.containers = {}
-            for container_id in runtime.get('containers', []):
-                container = Container(container_id)
+            for container_json in runtime.get('containers', []):
+                container_id = container_json['id']
+                name = container_json['name']
+                create_time = parser.isoparse(container_json['create_time'])
+                container = Container(container_id, name, create_time)
                 self.containers[container_id] = container
 
     def create(self):
@@ -55,8 +59,9 @@ class Runtime():
         runtime_path = pathlib.Path(oci_config['global']['path'])
         if not runtime_path.is_dir():
             runtime_path.mkdir(parents=True)
+        containers = [container.to_json() for container in self.containers.values()]
         runtime_json = {
-            'containers': list(self.containers.keys())
+            'containers': containers
         }
         runtime_file_path = runtime_path.joinpath('runtime.json')
         with runtime_file_path.open('w') as runtime_file:
@@ -66,19 +71,18 @@ class Runtime():
         container_names = [container.name for container in self.containers.values()]
         return generate_random_name(exclude_list=container_names)
 
-    def create_container(self, image_name, name=None, **kwargs):
-        if 'name' is None:
+    def create_container(self, image, name=None, **kwargs):
+        if name is None:
             name = self.generate_container_name()
-        container = Container()
-        container.create(image_name, name, **kwargs)
+        container = Container.create(image, name, **kwargs)
         self.containers[container.id] = container
         self.save()
         return container
 
-    def remove_container(self, container_ref):
+    def remove_container(self, container_ref, remove_filesystem=True):
         container = self.get_container(container_ref)
         container_id = container.id
-        container.remove()
+        container.destroy(remove_filesystem)
         del self.containers[container_id]
         self.save()
 

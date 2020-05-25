@@ -19,6 +19,7 @@ from oci_spec.image.v1 import Descriptor, MediaTypeImageLayer, MediaTypeImageLay
 from oci_api import oci_config, OCIError
 from oci_api.util import id_to_digest
 from oci_api.util.file import rm, cp, compress, sha256sum
+from .exceptions import LayerUnknownException
 
 log = logging.getLogger(__name__)
 
@@ -28,38 +29,46 @@ class Layer:
         filesystem_id = filesystem.id
         log.debug('Start creating layer from filesystem (%s)' % filesystem.id)
         with tempfile.TemporaryDirectory() as temp_dir_name:
+            size = filesystem.size()
             changeset_file_path = pathlib.Path(temp_dir_name, 'changeset.tar')
-            filesystem.commit(changeset_file_path)
-            layer_id = filesystem.id
-            media_type=MediaTypeImageLayer
-            if compressed:
-                changeset_file_path = compress(changeset_file_path, keep_original=True)
-                if changeset_file_path is None:
-                    raise OCIError('Could not compress layer file (%s)' % str(changeset_file_path))
-                media_type=MediaTypeImageLayerGzip
-                layer_id = sha256sum(changeset_file_path)
-                if layer_id is None:
-                    raise OCIError('Could not get hash of file %s' % str(changeset_file_path))
-            layers_path = pathlib.Path(oci_config['global']['path'], 'layers')
-            layer_file_path = layers_path.joinpath(layer_id)
-            if not layer_file_path.is_file():
-                if not layers_path.is_dir():
-                    layers_path.mkdir(parents=True)
-                cp(changeset_file_path, layer_file_path)
-        descriptor = Descriptor(
-            digest=id_to_digest(layer_id),
-            size=layer_file_path.stat().st_size,
-            media_type=media_type,
-        )
-        layer = cls(descriptor, filesystem, [])
+            diff_id = filesystem.commit(changeset_file_path)
+            try:
+                from .driver import Driver
+                layer = Driver().get_layer_by_diff_id(diff_id)
+                Driver().remove_filesystem(filesystem)
+            except LayerUnknownException:
+                layer_id = diff_id
+                media_type=MediaTypeImageLayer
+                if compressed:
+                    changeset_file_path = compress(changeset_file_path, keep_original=True)
+                    if changeset_file_path is None:
+                        raise OCIError('Could not compress layer file (%s)' % str(changeset_file_path))
+                    media_type=MediaTypeImageLayerGzip
+                    layer_id = sha256sum(changeset_file_path)
+                    if layer_id is None:
+                        raise OCIError('Could not get hash of file %s' % str(changeset_file_path))
+                layers_path = pathlib.Path(oci_config['global']['path'], 'layers')
+                layer_file_path = layers_path.joinpath(layer_id)
+                if not layer_file_path.is_file():
+                    if not layers_path.is_dir():
+                        layers_path.mkdir(parents=True)
+                    cp(changeset_file_path, layer_file_path)
+                descriptor = Descriptor(
+                    digest=id_to_digest(layer_id),
+                    size=layer_file_path.stat().st_size,
+                    media_type=media_type,
+                )
+                layer = cls(descriptor, diff_id, filesystem, size, [])
         log.debug('Finish creating layer from filesystem (%s)' % filesystem_id)
         return layer
 
-    def __init__(self, descriptor, filesystem, images):
+    def __init__(self, descriptor, diff_id, filesystem, size, images):
         self.descriptor = descriptor
         log.debug('Creating instance of %s(%s)' % (type(self).__name__, self.id or ''))
+        self.diff_id = diff_id
         self.filesystem = filesystem
         self.images = images
+        self.size = size
 
     @property
     def id(self):
@@ -68,10 +77,6 @@ class Layer:
     @property
     def parent(self):
         self.filesystem.layer
-
-    @property
-    def diff_id(self):
-        self.filesystem.id
 
     @property
     def small_id(self):
@@ -83,10 +88,7 @@ class Layer:
 
     @property
     def diff_digest(self):
-        return self.filesystem.digest
-
-    def size(self):
-        return self.filesystem.size()
+        return id_to_digest(self.diff_id)
 
     def virtual_size(self):
         return self.filesystem.virtual_size()
@@ -100,7 +102,9 @@ class Layer:
         layer_id = self.id
         self.descriptor = None   
         self.filesystem = None
-        log.info('Deleted: %s' % layer_digest)
+        self.diff_id = None
+        self.size = None
+        log.info('Deleted layer: %s' % layer_digest)
         log.debug('Finish destroying layer (%s)' % layer_id)
 
     def add_image_reference(self, image_id):

@@ -1,5 +1,16 @@
 # Change log for OCI API
 
+## 2020-05-25: Version 0.5.0
+
+- Moved commited filesystem path to diffs dir
+- Moved mounted filesystem path to container dir
+- Move Filesystem create() method to class
+- Filesystem id is no longer diff id or container id, it is a random 16 caps letters and 
+    number hash. Now diff_id is a Layer property and container_id is a property. 
+- Layer size() is no longer calculated at runtime, it is stored as property at commit time
+- Move Container create() method to class
+
+
 ## 2020-05-23: Version 0.4.0
 
 - Add build process in Image
